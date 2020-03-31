@@ -6,7 +6,7 @@
 #define MAX_REQUESTS          100   // Maximum number of customer requests at any time
 
 #define SERVER_IP     "127.0.0.1"   // IP address of simulator server
-#define SERVER_PORT          6000   // PORT of the simulator server
+#define SERVER_PORT          5000   // PORT of the simulator server
 
 #define UNKNOWN_AREA      -1
 

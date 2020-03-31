@@ -4,23 +4,30 @@
 #include <time.h>
 #include "simulator.h"
 
-#define BUFFER_SIZE 30
+#define MAX_SIZE_REQUEST 30
+#define EMPTY 0
 
-void main() {
-  // Set up the random seed
-  srand(time(NULL));
+              /** ** ** *
+      Main in generator.c creates random numbers,
+        calls on system() start the customer.c file
+        with these random numbers as the Pick up and the Drop off locaitons
+        for the Taxi in simulator
+              * ** ** **/
+void main()
+{
+  srand( time( NULL ));
+  int random_Pickup, random_Dropoff;
+	char clientRequest[ MAX_SIZE_REQUEST ];
 
-  while(1) {
-    	//generate two random areas indeces
-	int randPickupArea = rand() % NUM_CITY_AREAS;
-	int randDropoffArea = rand() % NUM_CITY_AREAS;
-	
-	char customer[BUFFER_SIZE];
-	snprintf(customer, sizeof(customer), "./customer %d %d", randPickupArea, randDropoffArea);
-	system(customer);
+  while( 1 )
+  {
+	random_Pickup = rand() % NUM_CITY_AREAS;
+	random_Dropoff = rand() % NUM_CITY_AREAS;
+  memset( clientRequest, EMPTY, sizeof( clientRequest ));
 
-	printf(" %d and %d \n", randPickupArea, randDropoffArea );
-    
-    usleep(250000);   /// do not remove this
+// Set the random values and create a string to use with system()
+	snprintf( clientRequest, sizeof( clientRequest ), "./customer %d %d", random_Pickup, random_Dropoff );
+	system( clientRequest );
+  usleep( 250000 );
   }
 }

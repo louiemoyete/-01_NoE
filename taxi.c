@@ -7,54 +7,115 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <errno.h>
 
-#define BUFFER_SIZE 30
-#define ARRIVED 0
-#define CENTER_X_LOCATION 4
-#define CENTER_Y_LOCATION 4
+#define MAX_SIZE_REQUEST 30
+#define EMPTY 0
+#define SUCCESS 0
+#define FAIL -1
+              /** ** ** *
+      Definitions for All Requests
+              * ** ** **/
+#define COMMAND 0
+              /** ** ** *
+      Definitions for SHUTDOWN Request
+              * ** ** **/
+#define CLOSE_DISPATCH 0
+              /** ** ** *
+      Definitions for UPDATE Request
+              * ** ** **/
+#define PLATE_NUM 1
+#define X_COORDINATE_RESULT 2
+#define X_COORDINATE_REMAINDER 3
+#define Y_COORDINATE_RESULT 4
+#define Y_COORDINATE_REMAINDER 5
+#define STATUS 6
+#define UPDATE_PICKUP_LOCATION 7
+#define UPDATE_DROPOFF_LOCATION 8
+#define RECONSTRUCT_INTEGERS 256
+              /** ** ** *
+      Definitions for REQUEST_CUSTOMER Request
+              * ** ** **/
+#define FIRST_REQ_IN_LINE 0
+#define PICKUP_LOCATION_RESPONSE 1
+#define DROPOFF_LOCATION_RESPONSE 2
 
-// The dispatch center server connection ... when made
-int                 clientSocket;  // client socket id
-struct sockaddr_in  clientAddress; // client address
-int bytesRcv;
+int clientSocket, bytesRcv;
+struct sockaddr_in  clientAddress;
 
-
-// Set up a client socket and connect to the dispatch center server.  Return -1 if there was an error.
-int connectToDispatchCenter(int *sock,  struct sockaddr_in *address) {
-
+							/** ** ** *
+			Function :
+				Connect to Dispatch Center
+			Parametres :
+				Pointer int : sock
+					Address of integer to hold return values of socket()
+					struct sockaddr_in pointer : address
+					Something I copied from Lanthiers notes
+			Local Variables :
+				int : Status :
+					integer to hold return of connect()
+			Returns :
+				SUCCESS ( 0 ) or FAIL ( -1 )
+			Functionality :
+				Opens a stream socket using sock ( Parametre ).
+				Sets it up to be zeroes
+				Connects it to the Dispatch Server
+							* ** ** **/
+int connectToDispatchCenter( int *sock,  struct sockaddr_in *address )
+{
 	int status;
 
-	// Create the client socket
-	*sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-	if (sock < 0) {
-		 printf("Client error : could not open socket.\n");
-		 return -1;
+// Create Socket
+	*sock = socket( AF_INET, SOCK_STREAM, IPPROTO_TCP );
+	if( sock < SUCCESS )
+	{
+		 printf( "CLIENT : *ERROR* : Could Not Open Socket\n" );
+		 return( FAIL );
 	}
 
-	// Setup address
-	memset(address, 0, sizeof(address));
+// Setup Socket
+	memset( address, EMPTY, sizeof( *address ));
+	address->sin_addr.s_addr = inet_addr( SERVER_IP );
 	address->sin_family = AF_INET;
-	address->sin_addr.s_addr = inet_addr(SERVER_IP);
-	address->sin_port = htons((unsigned short) SERVER_PORT);
+	address->sin_port = htons(( unsigned short )SERVER_PORT );
 
-	//Connect to Dispatch server
-	status = connect(*sock, (struct sockaddr *) address, sizeof(clientAddress));
-
-	 if (status < 0) {
-		 printf("client taxi error: could not connect.\n");
-		 exit(-1);
+// Connect Socket
+	status = connect( *sock,( struct sockaddr * )address, sizeof( *address ));
+	if( status < SUCCESS )
+	{
+		 return ( FAIL );
 	 }
-
-
-  return 0;
+  return ( SUCCESS );
 }
 
 
-
-// This code runs the taxi forever ... until the process is killed
-void runTaxi(Taxi *taxi) {
-  // Copy the data over from this Taxi to a local copy
-  Taxi   thisTaxi;
+							/** ** ** *
+			Function :
+				Run Taxi
+			Parametres :
+				Pointer to Taxi Struct : Taxi
+				Taxi Struct ot be manipulated, brought from DispatchCenter.c
+			Local Variables :
+				Taxi thisTaxi
+				Creates new Taxi and equals the values of the taxi given in the parametre
+			Return :
+				VOID
+				Functionality :
+					Handle Request for Customer :
+						Send Req to the server. Read the Response. If the response contians a request for taxi,
+						set the values of the taxi to those of the request
+					Handle Update :
+						Change the taxi's X and Y locations.
+						Set the new values.
+						Check whether the taxi has arrived to the Pickup or the Dropoff.
+						Set the new vlaues accordingly.
+							Either changing the taxi's values to the dropoff location
+							Or resetting the values so it may bea vailable again.
+						Send the new information to the server
+							* ** ** **/
+void runTaxi( Taxi *taxi )
+{
+  Taxi thisTaxi;
   thisTaxi.plateNumber = taxi->plateNumber;
   thisTaxi.currentArea = taxi->currentArea;
   thisTaxi.x = taxi->x;
@@ -64,152 +125,119 @@ void runTaxi(Taxi *taxi) {
   thisTaxi.dropoffArea = UNKNOWN_AREA;
   thisTaxi.eta = 0;
 
-	//Moving taxi X / Y locations
-	int deltaX;
-	int deltaY;
+	int deltaX, deltaY;
+	unsigned char clientRequest[ MAX_SIZE_REQUEST ], serverResponse[ MAX_SIZE_REQUEST ], clientResponse[ MAX_SIZE_REQUEST ];
 
-  // Go into an infinite loop to request customers from dispatch center when this taxi is available
-  // as well as sending location updates to the dispatch center when this taxi is picking up or dropping off.
-  while(1) {
-    // WRITE SOME CODE HERE
+  while( 1 )
+	{
 
-	//If taxi available - contact dispatch to get request
-	if (thisTaxi.status == AVAILABLE){
-		//Connect with Dispatch
-		if ( connectToDispatchCenter(&clientSocket, &clientAddress) == 0 ){
+//// // / Handle REQUEST CUSTOMER Request
+		if( thisTaxi.status == AVAILABLE )
+		{
+			if( connectToDispatchCenter(&clientSocket, &clientAddress) == SUCCESS )
+			{
+// Build Client Request
+				memset( clientRequest, EMPTY, sizeof( clientRequest ));
+				clientRequest[ COMMAND ] = REQUEST_CUSTOMER;
+				send( clientSocket, clientRequest, sizeof( clientRequest ), EMPTY );
 
-			//Create buffer to send
-			char message[BUFFER_SIZE];
-			message[0] = REQUEST_CUSTOMER;
+// Read Server Response
+				memset( serverResponse, EMPTY, sizeof( serverResponse ));
+				bytesRcv = recv( clientSocket, serverResponse, 80, EMPTY );
 
-			//send request to client
-			send(clientSocket, message, sizeof(message), 0);
+// If the server allowed it
+				if( serverResponse[ COMMAND ] == YES )
+				{
 
+// If the Pick up requested is the same as the taxi's current area
+					if( serverResponse[ PICKUP_LOCATION_RESPONSE ] == thisTaxi.currentArea )
+					{
 
-			//Get response from server
-			char response[BUFFER_SIZE];
-			bytesRcv = recv(clientSocket, response, 80, 0);
-			//printf("%d\n", response[0]);
-			//printf("%d\n", response[1]);
-			//printf("%d\n", response[2]);
+// Set the values, ETA = 10 minutes
+						thisTaxi.status = DROPPING_OFF;
+						thisTaxi.currentArea = serverResponse[ PICKUP_LOCATION_RESPONSE ];
+						thisTaxi.pickupArea = serverResponse[ PICKUP_LOCATION_RESPONSE ];
+						thisTaxi.dropoffArea = serverResponse[ DROPOFF_LOCATION_RESPONSE ];
+						thisTaxi.eta = TIME_ESTIMATES[ thisTaxi.pickupArea ][ thisTaxi.dropoffArea ];
 
-			//===REQUEST CUSTOMER====//
-			if ( response[0] == YES ){
-				//printf("Taxi : the customer request was accepted.\n");
-				//If pickup area is the same as the current
-				if ( response[1] == thisTaxi.currentArea ){			
-					//=========CHANGE THIS SO THAT IS USES THE 2D TIME_ESTIMATES ARRAY=======//
-					//estimated time of arrival, in this case the value should be 10min or 0min
-					//thisTaxi.eta = TIME_ESTIMATES[thisTaxi.pickupArea][thisTaxi.dropoffArea];
-					thisTaxi.eta = 0;
-					//Pick area is the current area
-					thisTaxi.currentArea = response[1];
-					//set pick area ll
-					thisTaxi.pickupArea = response[1];
-					//set dropoffArea
-					thisTaxi.dropoffArea = response[2];
-					//set taxi status
-					thisTaxi.status = DROPPING_OFF;
-					//printf("ETA ( PickupArea == currentArea ) : %d\n", thisTaxi.eta);
-
-				}else if (response[1] != thisTaxi.currentArea){ //If the pick area is not the current area
-
-					//set taxi as Picking up
-					thisTaxi.status = PICKING_UP;
-					//set pick area 
-					printf(" CURRENT AREA BEFORE : %d\n", thisTaxi.currentArea );
-					printf(" PICKUPAREA BEFORE: %d\n", thisTaxi.pickupArea );
-					printf(" DROPOFFAREA BEFORE : %d\n", thisTaxi.dropoffArea );
-					thisTaxi.pickupArea = response[1];
-					//set dropoffArea
-					thisTaxi.dropoffArea = response[2];
-					printf(" PICKUP response : %d\n", response[1] );
-					printf(" DROPOFF response : %d\n", response[2] );
-					printf(" CURRENT AREA AFTER : %d\n", thisTaxi.currentArea );
-					printf(" PICKUPAREA AFTER: %d\n", thisTaxi.pickupArea );
-					printf(" DROPOFFAREA AFTER : %d\n", thisTaxi.dropoffArea );
-					//set time estimate - pick up area to drop off area
-					/// ==== IS THIS THE TIME FROM TAXI CURRENT AREA TO PICK UP AREA ===////
-					thisTaxi.eta = TIME_ESTIMATES[thisTaxi.currentArea][thisTaxi.pickupArea];
-					printf("ETA ( PickupArea != currentArea ) : %d\n", thisTaxi.eta);
+// Else, if the pickup area is not the taxi's current area, ETA = Predefined Time Estimate
+					}else if( serverResponse[ PICKUP_LOCATION_RESPONSE ] != thisTaxi.currentArea )
+					{
+						thisTaxi.status = PICKING_UP;
+						thisTaxi.pickupArea = serverResponse[ PICKUP_LOCATION_RESPONSE ];
+						thisTaxi.dropoffArea = serverResponse[ DROPOFF_LOCATION_RESPONSE ];
+						thisTaxi.eta = TIME_ESTIMATES[ thisTaxi.currentArea ][ thisTaxi.pickupArea ];
+					}
 				}
-			}/*else if ( response[0] == NO ){
-				printf("Taxi error : the customer request was denied.\n");
-				//=======NOT SURE IF I SHOULD BREAK=======//
-				break;
-			}*/
-
-		}
-
-	} else { //If taxi is Dropping off or Picking up - contact dispatch to send an update
-		
-		//Connect with Dispatch
-		if ( connectToDispatchCenter(&clientSocket, &clientAddress) == 0 ){
-
-			//(x, y) locations of moving taxi
-			//Create buffer to send
-			char message[BUFFER_SIZE];
-			message[0] = UPDATE;
-			message[1] = thisTaxi.plateNumber;
-			message[2] = thisTaxi.x;
-			message[3] = thisTaxi.y;
-			message[4] = thisTaxi.status;
-			message[5] = thisTaxi.dropoffArea;
-
-			if(thisTaxi.status == PICKING_UP){
-				deltaX = ( AREA_X_LOCATIONS[thisTaxi.pickupArea] - AREA_X_LOCATIONS[thisTaxi.currentArea]) / thisTaxi.eta;
-				deltaY = ( AREA_Y_LOCATIONS[thisTaxi.pickupArea] - AREA_Y_LOCATIONS[thisTaxi.currentArea]) / thisTaxi.eta;
-
-			} else if (thisTaxi.status == DROPPING_OFF){
-
-				deltaX = ( AREA_X_LOCATIONS[thisTaxi.dropoffArea] - AREA_X_LOCATIONS[thisTaxi.pickupArea]) / thisTaxi.eta;
-				deltaY = ( AREA_Y_LOCATIONS[thisTaxi.dropoffArea] - AREA_Y_LOCATIONS[thisTaxi.pickupArea]) / thisTaxi.eta;
-
+// Close Socket
+				close( clientSocket );
 			}
 
-			//new position
-			thisTaxi.x = thisTaxi.x + deltaX;
-			thisTaxi.y = thisTaxi.y + deltaY;
-			thisTaxi.eta -= 1;
+// // // / Handle UPDATE Response / // // //
+		}else{
+			if( connectToDispatchCenter( &clientSocket, &clientAddress ) == SUCCESS )
+			{
 
-			printf("TIME ESTIMATE REMAINING %d\n", thisTaxi.eta);
+// If the taxi's status is Picking Up
+				if( thisTaxi.status == PICKING_UP )
+				{
+					deltaX =( AREA_X_LOCATIONS[ thisTaxi.pickupArea ]- AREA_X_LOCATIONS[ thisTaxi.currentArea ])/( TIME_ESTIMATES[ thisTaxi.currentArea ][ thisTaxi.pickupArea ]);
+					deltaY =( AREA_Y_LOCATIONS[ thisTaxi.pickupArea ]- AREA_Y_LOCATIONS[ thisTaxi.currentArea ])/( TIME_ESTIMATES[ thisTaxi.currentArea ][ thisTaxi.pickupArea ]);
 
+// If the taxi's status is Dropping Off
+				}else
+				{
+					deltaX =( AREA_X_LOCATIONS[ thisTaxi.dropoffArea ]- AREA_X_LOCATIONS[ thisTaxi.pickupArea ])/( TIME_ESTIMATES[ thisTaxi.pickupArea ][ thisTaxi.dropoffArea ]);
+					deltaY =( AREA_Y_LOCATIONS[ thisTaxi.dropoffArea ]- AREA_Y_LOCATIONS[ thisTaxi.pickupArea ])/( TIME_ESTIMATES[ thisTaxi.pickupArea ][ thisTaxi.dropoffArea ]);
+				}
 
-			if(thisTaxi.status == DROPPING_OFF && thisTaxi.eta == ARRIVED ){
-				//Set X and Y location to DROPOFF AREA
-				thisTaxi.x = AREA_X_LOCATIONS[thisTaxi.dropoffArea];
-				thisTaxi.y =  AREA_Y_LOCATIONS[thisTaxi.dropoffArea];
-				//set taxi available
-				thisTaxi.status = AVAILABLE;
-				//set currentArea to dropoffArea
-				thisTaxi.currentArea = thisTaxi.dropoffArea;
-				//set pickup and dropoff areas to unkown
-				taxi->pickupArea = UNKNOWN_AREA;
-				taxi->dropoffArea = UNKNOWN_AREA;
+// Update the taxi's position
+				thisTaxi.x =( thisTaxi.x + deltaX );
+				thisTaxi.y =( thisTaxi.y + deltaY );
+				--thisTaxi.eta;
 
-			} else if (thisTaxi.status == PICKING_UP && thisTaxi.eta == ARRIVED) {
-				//Set X and Y location to PICK UP AREA
-				thisTaxi.x = AREA_X_LOCATIONS[thisTaxi.pickupArea];
-				thisTaxi.y =  AREA_Y_LOCATIONS[thisTaxi.pickupArea];
-				//set taxi to droppping off status
-				thisTaxi.status = DROPPING_OFF;
-				//set currentArea to dropoffArea
-				thisTaxi.currentArea = UNKNOWN_AREA;
-				//set time estimate - pick up area to drop off area
-				thisTaxi.eta = TIME_ESTIMATES[thisTaxi.pickupArea][thisTaxi.dropoffArea];			
+// If the Taxi has arrived to the drop off location
+				if(( thisTaxi.eta == SUCCESS )&&( thisTaxi.status == DROPPING_OFF ))
+				{
 
+// Set the Taxi's values
+					thisTaxi.status = AVAILABLE;
+					thisTaxi.currentArea = thisTaxi.dropoffArea;
+					taxi->pickupArea = UNKNOWN_AREA;
+					taxi->dropoffArea = UNKNOWN_AREA;
+					thisTaxi.x = AREA_X_LOCATIONS[ thisTaxi.dropoffArea ];
+					thisTaxi.y =  AREA_Y_LOCATIONS[ thisTaxi.dropoffArea ];
+
+// If the Taxi has arrived to the pick up location
+				}else if(( thisTaxi.eta == SUCCESS )&&( thisTaxi.status == PICKING_UP ))
+	 			{
+
+// Set the Taxi's values
+					thisTaxi.status = DROPPING_OFF;
+					thisTaxi.currentArea = UNKNOWN_AREA;
+					thisTaxi.x = AREA_X_LOCATIONS[ thisTaxi.pickupArea ];
+					thisTaxi.y =  AREA_Y_LOCATIONS[ thisTaxi.pickupArea ];
+					thisTaxi.eta = TIME_ESTIMATES[ thisTaxi.pickupArea ][ thisTaxi.dropoffArea ];
+
+				}
+
+// Create Client Response
+				memset( clientRequest, EMPTY, sizeof( clientRequest ));
+				clientResponse[ COMMAND ] = UPDATE;
+				clientResponse[ PLATE_NUM ] = thisTaxi.plateNumber;
+				clientResponse[ STATUS ] = thisTaxi.status;
+				clientResponse[ UPDATE_PICKUP_LOCATION ] = thisTaxi.pickupArea;
+				clientResponse[ UPDATE_DROPOFF_LOCATION ] = thisTaxi.dropoffArea;
+				clientResponse[ X_COORDINATE_RESULT ] =( thisTaxi.x / RECONSTRUCT_INTEGERS );
+				clientResponse[ X_COORDINATE_REMAINDER ] =( thisTaxi.x % RECONSTRUCT_INTEGERS );
+				clientResponse[ Y_COORDINATE_RESULT ] =( thisTaxi.y / RECONSTRUCT_INTEGERS );
+				clientResponse[ Y_COORDINATE_REMAINDER ] =( thisTaxi.y % RECONSTRUCT_INTEGERS );
+				send( clientSocket, clientResponse, sizeof( clientResponse ), EMPTY );
 			}
 
-
-			//send request to client
-			send(clientSocket, message, sizeof(message), 0);
-
+//Close the connection
+		close( clientSocket );
 		}
+	  usleep( 50000 );
 	}
-
-
-    usleep(50000);  // A delay to slow things down a little
-  }
 }
-
-

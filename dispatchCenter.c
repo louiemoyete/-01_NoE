@@ -3,233 +3,234 @@
 #include <netinet/in.h>
 #include <errno.h>
 
-#define BUFFER_SIZE 30
-#define OFFLINE 0
+#define MAX_SIZE_REQUEST 30
+#define EMPTY 0
+#define SUCCESS 0
+#define FAIL -1
+              /** ** ** *
+      Definitions for All Requests
+              * ** ** **/
+#define COMMAND 0
+              /** ** ** *
+      Definitions for SHUTDOWN Request
+              * ** ** **/
+#define CLOSE_DISPATCH 0
+              /** ** ** *
+      Definitions for UPDATE Request
+              * ** ** **/
+#define PLATE_NUM 1
+#define X_COORDINATE_RESULT 2
+#define X_COORDINATE_REMAINDER 3
+#define Y_COORDINATE_RESULT 4
+#define Y_COORDINATE_REMAINDER 5
+#define STATUS 6
+#define UPDATE_PICKUP_LOCATION 7
+#define UPDATE_DROPOFF_LOCATION 8
+#define RECONSTRUCT_INTEGERS 256
+              /** ** ** *
+      Definitions for REQUEST_CUSTOMER Request
+              * ** ** **/
+#define FIRST_REQ_IN_LINE 0
+#define PICKUP_LOCATION_RESPONSE 1
+#define DROPOFF_LOCATION_RESPONSE 2
+              /** ** ** *
+      Definitions for REQUEST_TAXI Request
+              * ** ** **/
+#define PICKUP_LOCATION_REQUEST 1
+#define DROPOFF_LOCATION_REQUEST 2
 
 
-// Initialize the dispatch center server by creating the server socket, setting up the server address,
-// binding the server socket and setting up the server to listen for taxi and customer clients.
-void initializeDispatchServer(int *serverSocket, struct sockaddr_in  *serverAddress) {
+							/** ** ** *
+			Function :
+				Initialise Dispatch Server
+			Parametres :
+				int pointer : serverSocket
+				pointer representing the socket matching the server
+				struct sockaddr_in pointer : serverAddress
+				provided protocol independent structure
+			Returns :
+			 	N/A
+			Local Variables :
+				INADDR_ANY : ( Global from imported library )
+				Allows the server to accept all UDP packets and TCP connection requests made for its port
+				SERVER_PORT : ( Global from simulator.h )
+				Value of 6000
+				AF_INET : ( Global from imported library )
+				Communication over a network
+			Functionality :
+				Initialises the dispatch server by creating a strem socket using socket().
+				Then it zeroes the entire thing with memset().
+				It converts the long primitive in INADDR_ANY from host format to network format using htonl()
+				It converts the short primitive in SERVER_PORT from host format to network format using htons()
+	* ** ** **/
+void initializeDispatchServer( int *serverSocket, struct sockaddr_in  *serverAddress )
+{
 	int status;
 
-	*serverSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-	
-	//Created socket, check for error. 
-	if (serverSocket < 0 ){
-		printf(" Server error : could not open socket. \n");
-		exit(-1);
+// Create Socket
+	*serverSocket = socket( AF_INET, SOCK_STREAM, IPPROTO_TCP );
+	if( serverSocket < EMPTY )
+	{
+		printf( "SERVER : *ERROR* : Could Not Open the Socket. \n" );
+		exit( FAIL );
 	}
 
-	memset(serverAddress, 0, sizeof(serverAddress));
-	//serverAddress->sin_family = AF_LOCAL;
+// Set it to zero
+	memset( serverAddress, EMPTY, sizeof( *serverAddress ));
+	serverAddress->sin_addr.s_addr = htonl( INADDR_ANY );
 	serverAddress->sin_family = AF_INET;
-	serverAddress->sin_addr.s_addr = htonl(INADDR_ANY);
-	//serverAddress.sin_addr.s_addr = htonl("127.0.0.1");
-	serverAddress->sin_port = htons( (unsigned short) SERVER_PORT);
+	serverAddress->sin_port = htons(( unsigned short ) SERVER_PORT );
 
+// Bind the Socket
+	status = bind( *serverSocket, ( struct sockaddr * )serverAddress, sizeof( *serverAddress ));
+	if( status < SUCCESS )
+	{
+		printf( "SERVER : *ERROR* : Could Not Bind the Socket\n" );
+		exit( FAIL );
+	}
+
+// Set up the Socket
+	status = listen( *serverSocket, MAX_REQUESTS );
+	if( status < EMPTY )
+	{
+		printf( "SERVER : *ERROR* : Could Not Listen the Socket\n" );
+		exit( FAIL );
+	}
 }
 
-// Handle client requests coming in through the server socket.  This code should run
-// indefinitiely.  It should wait for a client to send a request, process it, and then
-// close the client connection and wait for another client.  The requests that may be
-// handled are SHUTDOWN (from stop.c), REQUEST_TAXI (from request.c) and UPDATE or
-// REQUEST_CUSTOMER (from taxi.c) as follows:
-
-//   SHUTDOWN - causes the dispatch center to go offline.
-
-//   REQUEST_TAXI - contains 2 additional bytes which are the index of the area to be
-//                  picked up in and the index of the area to be dropped off in. If
-//                  the maximum number of requests has not been reached, a single YES
-//                  byte should be sent back, otherwise NO should be sent back.
-
-//   REQUEST_CUSTOMER - contains no additional bytes.  If there are no pending customer
-//                      requests, then NO should be sent back.   Otherwise a YES should
-//                      be sent back followed by the pickup and dropoff values for the
-//                      request that has been waiting the logest in the queue.
-
-//   UPDATE - contains additional bytes representing the taxi's x, y plate, status and
-//            dropoff area.  Nothing needs to be sent back to the taxi.
-
-void *handleIncomingRequests(void *d) {
+							/** ** ** *
+			Function :
+				handleIncomingRequests
+			Parametres :
+			 	Function Pointer
+			Returns :
+				N/A
+			Local Variables :
+				MAX_REQUESTS ( Global from simulator.h )
+				Value of 100
+			Functionality :
+				Calls initializeDispatchServer() to start the socket
+				Once the socket is opened, we assign an IP address to it from which to accept messaged with bind()
+				Once the socket is bound, we listen for incoming requests with listen()
+				Then we go into an infinite loop that handles the incoming requests :
+				From stop.c : SHUTDOWN :
+					Causes dispatch centre to go offline
+				From request.c : REQUEST_TAXI :
+					Contians 2 bytes. These are ( index of ) area to be picked up in and ( index of ) area to be dropped off in.
+					Check for limitations ( on MAX_REQUESTS ) send YES ( Global from simulator.h ) or NO ( Global from simulator.h )
+				From request.c : UPDATE :
+					Contains bytes representing the taxi's x, y, plate, status and dropoff area.
+					Nothing is sent back.
+				From taxi.c : REQUEST_CUSTOMER :
+					Contains Nothing.
+					Checls for prending customer requests.
+					Sends back NO ( Global form simulator.h ) or YES ( Global from simulator.h ). Chooses request that has been in queue the longest
+							* ** ** **/
+void *handleIncomingRequests( void *d )
+{
   DispatchCenter  *dispatchCenter = d;
+  int addressSize, bytesRcv, clientSocket, serverSocket, status;
+  struct sockaddr_in clientAddress, serverAddress;
+	unsigned char incomingRequest[ MAX_SIZE_REQUEST ];
 
-  int                 serverSocket;
-  struct sockaddr_in  serverAddress;
+// Start the Server
+  initializeDispatchServer( &serverSocket, &serverAddress );
 
-	struct sockaddr_in  clientAddr;
-	int clientSocket;
-	int bytesRcv;
-	int status;
-	int addrSize;
-	char buffer[BUFFER_SIZE];
-	
+	while( 1 )
+	{
+		unsigned char serverResponse[ MAX_SIZE_REQUEST ];
 
-  // Initialize the server
-  initializeDispatchServer(&serverSocket, &serverAddress);
+// Set up the client
+		addressSize = sizeof( clientAddress );
+		clientSocket = accept( serverSocket,( struct sockaddr * )&clientAddress,&addressSize );
+		if( clientSocket < EMPTY )
+		{
+			printf( "SERVER : *ERROR* : Could Not Accept Client Socket\n");
+			exit( FAIL );
+		}
 
-	//BIND THE SERVER SOCKET
-	 status = bind(serverSocket, (struct sockaddr *) &serverAddress, sizeof(serverAddress));
-	//Check for error
-	if (status < 0){
-		printf("Server error: could not bind socket. %s \n");
-		//strerror(errno);
-		exit(-1);
+// Incoming request
+		bytesRcv = recv( clientSocket, incomingRequest, sizeof( incomingRequest ), EMPTY );
 
-	}
-	
-	//Socket listens to incomming request
-	status = listen(serverSocket, MAX_REQUESTS);
-	//check for error
-	if ( status < 0){
-		printf("Server error could not listen on socket. \n");
-		exit(-1);
-	}
-	
-
-  // REPLACE THE CODE BELOW WITH YOUR OWN CODE
-	 while (1) {
-		addrSize = sizeof(clientAddr);
-	 	clientSocket = accept(serverSocket,(struct sockaddr *)&clientAddr,&addrSize);
-
-		 if (clientSocket < 0) {
-			 printf(" Server error:  could accept incoming client connection.\n");
-			 exit(-1);
-		 }
-		//printf(" Connected.\n");
-		//Talk to client
-		//while(1){
-			
-			//Get message
-			bytesRcv = recv(clientSocket, buffer, sizeof(buffer), 0);
-			// put zero at the end 
-			//buffer[bytesRcv] = 0;
-			//printf(" Server : Request received \n");
-			
-			
-			//======= CUSTOMER REQUESTED ======= // 
-			if(buffer[0] == REQUEST_CUSTOMER){
-
-				//create response buffer
-				char response[BUFFER_SIZE];
-				//printf("Number of requests %d\n", dispatchCenter->numRequests);
-				if (dispatchCenter->numRequests != 0){ 
-
-					// Construct Buffer with message to send
-					response[0] = YES; //Yes to taxi
-					response[1] = dispatchCenter->requests[0].pickupLocation;
-					response[2] = dispatchCenter->requests[0].dropoffLocation;
-
-					//store update command
-					//response[3] = UPDATE;
-					//SEND BUFFER
-					send(clientSocket, response, sizeof(response), 0);
-
-					//remove request
-					for (int i = 0; i < dispatchCenter->numRequests-1; i++){
-						dispatchCenter->requests[i] = dispatchCenter->requests[i+1];
-					}
-					//printf("A request for a customer has been made\n");
-				
-				}else{
-					// Construct Buffer with message to send
-					response[0] = NO; //No to taxi
-					send(clientSocket, response, sizeof(response), 0);
-					//printf("Server : A request for a customer has benn denied\n");
-				}
-				
-			}
-
-			//======= UPDATE REQUESTED ======= //
-			if ( buffer[0] == UPDATE){
-				//Information recieved from Taxi client
-				int taxiIndex;
-				//Find taxi
-				for (int i = 0; i < dispatchCenter->numTaxis; i++){
-					//check if the plate number matches the one that was recieved
-					if (dispatchCenter->taxis[i]->plateNumber = buffer[1]){
-						//stores taxi index of Array of taxis in Dispatch Centre
-						taxiIndex = i;
-
-					}
-				}
-				//Taxi plate number (I GUESS I DONT HAVE TO UPDATE THE PLATE NUMBER)
-				//dispatchCenter->taxis[taxiIndex].x = buffer[2];
-		
-				//Current taxi x location 
-				//(the x and y are int, and we need to send char)
-				dispatchCenter->taxis[taxiIndex]->x = buffer[2];
-
-				//Current taxi y location
-				dispatchCenter->taxis[taxiIndex]->y = buffer[3];
-
-				//Current taxi status
-				dispatchCenter->taxis[taxiIndex]->status = buffer[4];
-
-				//Current taxi dropoffArea
-				//===========NOT SURE ABOUT THIS============//
-				//dispatchCenter->taxis[taxiIndex]->dropoffArea = AREA_NAMES[(buffer[5])];
-
-				//printf("An update for the taxi has been made\n");
-
-
-			}
-			//========= TAXI REQUESTED ======== //
-			if(buffer[0] == REQUEST_TAXI){
-
-				//printf("Server : A taxi request has been recieved.");
-				//Create response buffer
-				char response[BUFFER_SIZE];			
-
-				if(dispatchCenter->numRequests != MAX_REQUESTS){
-					
-					// Construct Buffer with message to send
-					response[0] = YES; //Yes to customer
-					// Create a new request 
-					Request newRequest;
-					newRequest.pickupLocation = AREA_NAMES[(buffer[1])];
-					newRequest.dropoffLocation = AREA_NAMES[(buffer[2])];	
-					// Add the request to the request array ( first in - first out queue)
-					dispatchCenter->requests[dispatchCenter->numRequests] = newRequest;
-					// Increment the number of requests
-					dispatchCenter->numRequests +=1;	
-					//send message
-					send(clientSocket, response, sizeof(response), 0);
-
-					//printf("Server : The request for a taxi has been handled.");
-				}else{
-					// Construct Buffer with message to send
-					response[0] = NO; //No to customer
-
-					//send message
-					send(clientSocket, response, sizeof(response), 0);
-
-					//printf("Server : The request for a taxi has been denied.");				
-				}
-					
-			}		
-			
-			//======= SHUTDOWN REQUESTED ======= //
-			if(buffer[0] == SHUTDOWN){
-				
-				//sets status to offline 
-				dispatchCenter->online = OFFLINE;
-				//printf("The Ottawa dispatch center is offline.");
-				//break the loop
-				break;
-		
-			}
-			
-		//}
-		
-		//printf("Closing client connection\n");
-		close(clientSocket);
-		/*// If the client shutsdown, the server shuts down
-		if(buffer[0] == SHUTDOWN){
+// // // / Handle Request : SHUTDOWN / // // //
+		if( incomingRequest[ COMMAND ] == SHUTDOWN )
+		{
+			dispatchCenter->online = CLOSE_DISPATCH;
 			break;
-		}*/
-	}	
-	close(serverSocket);
-	//printf("Shutting down server\n");
+			close(serverSocket);
+		}
 
-	
+// // // / Handle Request : REQUEST_TAXI / // // //
+		if( incomingRequest[ COMMAND ] == REQUEST_TAXI )
+		{
+			if( dispatchCenter->numRequests != MAX_REQUESTS )
+			{
+				serverResponse[ COMMAND ] = YES;
+
+// Create a new response, add it to the Response Array in DispatchCenter
+				Request newRequest;
+				newRequest.pickupLocation = incomingRequest[ PICKUP_LOCATION_REQUEST ];
+				newRequest.dropoffLocation = incomingRequest[ DROPOFF_LOCATION_REQUEST ];
+				dispatchCenter->requests[dispatchCenter->numRequests] = newRequest;
+				++dispatchCenter->numRequests;
+				send( clientSocket, serverResponse, sizeof( serverResponse ), EMPTY );
+			}else
+			{
+				serverResponse[ COMMAND ] = NO;
+				send( clientSocket, serverResponse, sizeof( serverResponse ), EMPTY );
+			}
+		}
+
+// // // / Handle Request : UPDATE / // // //
+		if ( incomingRequest[ COMMAND ] == UPDATE)
+		{
+			int taxiSendingUpdate;
+			for( int i = EMPTY; i < dispatchCenter->numTaxis; i++ )
+			{
+
+// Look for the Taxi, Check the Plate Number
+				if( dispatchCenter->taxis[ i ]->plateNumber == incomingRequest[ PLATE_NUM ] )
+				{
+					taxiSendingUpdate = i;
+					break;
+				}
+			}
+
+// Update its values, reconstructing the broken integer than was sent
+			dispatchCenter->taxis[ taxiSendingUpdate ]->status = incomingRequest[ STATUS ];
+			dispatchCenter->taxis[ taxiSendingUpdate ]->pickupArea = incomingRequest[ UPDATE_PICKUP_LOCATION ];
+			dispatchCenter->taxis[ taxiSendingUpdate ]->dropoffArea = incomingRequest[ UPDATE_DROPOFF_LOCATION ];
+			dispatchCenter->taxis[ taxiSendingUpdate ]->x =( incomingRequest[ X_COORDINATE_RESULT ] * RECONSTRUCT_INTEGERS ) + incomingRequest[ X_COORDINATE_REMAINDER ];
+			dispatchCenter->taxis[ taxiSendingUpdate ]->y =( incomingRequest[ Y_COORDINATE_RESULT ] * RECONSTRUCT_INTEGERS ) + incomingRequest[ Y_COORDINATE_REMAINDER ];
+		}
+
+// // // / Handle Request : REQUEST_CUSTOMER / // // //
+		if( incomingRequest[ COMMAND ] == REQUEST_CUSTOMER)
+		{
+			if ( dispatchCenter->numRequests != EMPTY )
+			{
+				serverResponse[ COMMAND ] = YES;
+				serverResponse[ PICKUP_LOCATION_RESPONSE ] = dispatchCenter->requests[ FIRST_REQ_IN_LINE ].pickupLocation;
+				serverResponse[ DROPOFF_LOCATION_RESPONSE ] = dispatchCenter->requests[ FIRST_REQ_IN_LINE ].dropoffLocation;
+				send( clientSocket, serverResponse, sizeof( serverResponse ), EMPTY );
+
+// Delete Request by shiftinf all requests in the array one spot to the left
+				for( int i = EMPTY; i < dispatchCenter->numRequests-1; i++ )
+				{
+					dispatchCenter->requests[ i ] = dispatchCenter->requests[ i+1 ];
+				}
+				--dispatchCenter->numRequests;
+			}else
+			{
+				serverResponse[ COMMAND ] = NO;
+				send( clientSocket, serverResponse, sizeof( serverResponse ), EMPTY );
+			}
+		}
+
+// Close the client after every response
+		close(clientSocket);
+	}
+
+// Close the Server if the while loop ends
+	close(serverSocket);
 }
